@@ -1,102 +1,95 @@
-# 📚 Sistema RAG - Asistente de Documentos
+# 🤖 AMSAC AI - Sistema de Consulta de Documentos
 
-Un sistema completo de Retrieval-Augmented Generation (RAG) 100% gratuito y local para consultar tus documentos PDF.
+Sistema inteligente de consulta de documentos PDF usando Google Gemini AI con interfaz web moderna.
 
 ## 🌟 Características
 
-- **100% Gratuito** - Sin costos de API ni suscripciones
-- **Totalmente Local** - Tus documentos nunca salen de tu computadora
-- **Interfaz Amigable** - Interfaz web moderna con Streamlit
+- **IA Avanzada** - Usa Google Gemini para respuestas inteligentes
+- **Interfaz Moderna** - Diseño web profesional con Bootstrap 5
 - **Procesamiento Automático** - Carga y procesa PDFs automáticamente
-- **Memoria Conversacional** - Mantiene el contexto de la conversación
-- **Búsqueda Inteligente** - Encuentra información relevante en segundos
+- **FastAPI** - API REST rápida y eficiente
+- **Fácil de Usar** - Chat interactivo en tiempo real
 
 ## 🚀 Inicio Rápido
 
 ### 1. Activar Entorno Virtual
 ```bash
-source .venv/bin/activate
+.venv\Scripts\Activate.ps1  # Windows PowerShell
 ```
 
-### 2. Iniciar Interfaz Gráfica
+### 2. Iniciar Aplicación
 ```bash
-streamlit run app.py
+python app.py
 ```
 
 ### 3. Usar el Sistema
-1. Abre tu navegador en la URL que aparece (generalmente `http://localhost:8501`)
+1. Abre tu navegador en `http://localhost:9000`
 2. Agrega archivos PDF a la carpeta `documentos/`
-3. Presiona "🚀 Inicializar Sistema" en la barra lateral
-4. ¡Empieza a chatear con tus documentos!
+3. ¡Empieza a chatear con tus documentos!
 
 ## 📁 Estructura del Proyecto
 
 ```
-├── documentos/           # Coloca tus PDFs aquí
-├── repositorio_faiss/   # Índice vectorial (se crea automáticamente)
-├── app.py              # Interfaz gráfica principal
-├── main.py             # API FastAPI (opcional)
-├── requirements.txt    # Dependencias
-└── .env               # Variables de entorno
+├── .venv/              # Entorno virtual Python
+├── documentos/         # Coloca tus PDFs aquí
+├── templates/          # Plantillas HTML
+│   └── chat.html      # Interfaz de chat
+├── static/            # Archivos estáticos (CSS, JS, imágenes)
+├── app.py             # Aplicación principal FastAPI
+├── requirements.txt   # Dependencias del proyecto
+└── .env              # Variables de entorno (API keys)
 ```
 
 ## 🛠️ Tecnologías Utilizadas
 
-- **Streamlit** - Interfaz gráfica web
-- **LangChain** - Framework para RAG
-- **TinyLlama** - Modelo de lenguaje local (1.1B parámetros)
-- **Sentence Transformers** - Embeddings multilingües
-- **FAISS** - Almacenamiento vectorial eficiente
-- **PyPDF** - Procesamiento de PDFs
+- **FastAPI** - Framework web moderno y rápido
+- **Google Gemini AI** - Modelo de IA para respuestas inteligentes
+- **PyMuPDF** - Procesamiento de documentos PDF
+- **Bootstrap 5** - Framework CSS para interfaz moderna
+- **Uvicorn** - Servidor ASGI de alto rendimiento
 
 ## 💡 Ejemplos de Uso
 
-Una vez inicializado el sistema, puedes hacer preguntas como:
+Una vez iniciado el sistema, puedes hacer preguntas como:
 
 - "¿Qué es la norma ISO 27001?"
 - "¿Cuáles son los requisitos para la certificación?"
 - "Explica el proceso de auditoría"
 - "¿Qué controles de seguridad se mencionan?"
 
-## 🔧 Configuración Avanzada
+## 🔧 Endpoints API Disponibles
 
-### API FastAPI (Opcional)
-Si prefieres una API en lugar de interfaz gráfica:
-
-```bash
-uvicorn main:app --reload
-```
-
-La API estará disponible en `http://localhost:8000`
-
-### Endpoints Disponibles
-- `GET /` - Estado del sistema
-- `GET /health` - Verificación de salud
-- `POST /chat` - Consultas RAG
+- `GET /` - Interfaz de chat principal
+- `GET /health` - Estado del sistema
+- `POST /chat` - Enviar consultas
+- `GET /status` - Información detallada del sistema
 
 ## 📋 Requisitos
 
 - Python 3.9+
-- Espacio en disco: ~2GB para modelos
-- Memoria RAM: 4GB+ recomendado
+- Google Gemini API Key (configurar en `.env`)
+- Memoria RAM: 2GB+ recomendado
+
+## � Configuración API Key
+
+Edita el archivo `.env` y agrega tu API key de Google Gemini:
+```
+GEMINI_API_KEY=tu_api_key_aqui
+```
 
 ## 🐛 Solución de Problemas
-
-### Si el modelo no carga:
-- Asegúrate de tener suficiente RAM
-- Espera unos minutos (la primera descarga tarda)
 
 ### Si no encuentra documentos:
 - Verifica que los PDFs estén en la carpeta `documentos/`
 - Asegúrate de que los archivos tengan extensión `.pdf`
 
-### Si la interfaz no se inicia:
+### Si hay error de API:
+- Verifica que tu API key de Gemini sea válida
+- Revisa el archivo `.env`
+
+### Si la aplicación no inicia:
 - Verifica que el entorno virtual esté activado
 - Reinstala las dependencias: `pip install -r requirements.txt`
-
-## 🤝 Contribuir
-
-¡Siéntete libre de mejorar este proyecto!
 
 ## 📄 Licencia
 

@@ -1,290 +1,368 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 import os
-import streamlit as st
 from pathlib import Path
-from typing import List, Dict, Any
-import time
+import fitz  # PyMuPDF
+import requests
+import logging
+from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.llms import HuggingFacePipeline
-from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
+# Cargar variables de entorno
+load_dotenv()
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, BitsAndBytesConfig
-import torch
+# Configuración
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Configuración de la página
-st.set_page_config(
-    page_title="Sistema RAG - Asistente de Documentos",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Configurar API key de Gemini desde .env
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyB4GXfKMabtd7ioO9tcYVjN63vkWmgcRak")
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
 
-# Variables globales
-@st.cache_resource
-def cargar_embeddings():
-    """Carga los modelos de embeddings"""
-    with st.spinner("🔄 Cargando modelos de embeddings..."):
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/distiluse-base-multilingual-cased-v2",
-            model_kwargs={'device': 'cpu'}
-        )
-    return embeddings
+# Estado global
+class GlobalState:
+    def __init__(self):
+        self.documentos_texto = {}
+        self.gemini_model = None
+        self.initialized = False
 
-@st.cache_resource
-def cargar_modelo_llm():
-    """Carga el modelo de lenguaje local"""
+state = GlobalState()
+
+def initialize_system():
+    """Inicializa el sistema automáticamente"""
+    if state.initialized:
+        return True
+    
     try:
-        with st.spinner("🤖 Cargando modelo de lenguaje local (puede tardar varios minutos)..."):
-            # Configuración para cuantización
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-            )
-            
-            # Modelo pequeño y eficiente
-            model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                quantization_config=quantization_config,
-                device_map="auto",
-                torch_dtype=torch.float16,
-                trust_remote_code=True
-            )
-            
-            # Crear pipeline
-            pipe = pipeline(
-                "text-generation",
-                model=model,
-                tokenizer=tokenizer,
-                max_new_tokens=512,
-                temperature=0.1,
-                do_sample=True,
-                top_p=0.95,
-                top_k=50,
-                repetition_penalty=1.1,
-                pad_token_id=tokenizer.eos_token_id
-            )
-            
-            llm = HuggingFacePipeline(pipeline=pipe)
-            return llm
-    except Exception as e:
-        st.error(f"❌ Error cargando el modelo: {e}")
-        return None
-
-def procesar_documentos(embeddings):
-    """Procesa los documentos PDF y crea el índice vectorial"""
-    documentos_path = Path("documentos")
-    
-    if not documentos_path.exists():
-        st.warning("⚠️ La carpeta 'documentos/' no existe. Creándola...")
-        documentos_path.mkdir(exist_ok=True)
-        return None, []
-    
-    pdf_files = list(documentos_path.glob("*.pdf"))
-    
-    if not pdf_files:
-        st.warning("⚠️ No se encontraron archivos PDF en la carpeta 'documentos/'")
-        return None, []
-    
-    with st.spinner(f"📄 Procesando {len(pdf_files)} documentos PDF..."):
-        all_docs = []
-        document_sources = []
+        logger.info("🚀 Iniciando sistema AMSAC AI...")
         
-        for pdf_file in pdf_files:
-            st.write(f"   Cargando: {pdf_file.name}")
-            loader = PyPDFLoader(str(pdf_file))
-            docs = loader.load()
-            
-            # Añadir metadata
-            for doc in docs:
-                doc.metadata["source"] = pdf_file.name
-            
-            all_docs.extend(docs)
-            document_sources.append(pdf_file.name)
-        
-        # Dividir documentos
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=150,
-            length_function=len,
-        )
-        splits = text_splitter.split_documents(all_docs)
-        
-        # Crear índice FAISS
-        repositorio_path = Path("repositorio_faiss")
-        repositorio_path.mkdir(exist_ok=True)
-        
-        if (repositorio_path / "index.faiss").exists():
-            vector_store = FAISS.load_local(
-                str(repositorio_path), 
-                embeddings, 
-                allow_dangerous_deserialization=True
-            )
-            vector_store.add_documents(splits)
-        else:
-            vector_store = FAISS.from_documents(splits, embeddings)
-        
-        vector_store.save_local(str(repositorio_path))
-        
-        return vector_store, document_sources
-
-def generar_respuesta(contexto: str, pregunta: str, llm):
-    """Genera una respuesta basada en el contexto"""
-    if not contexto.strip():
-        return "No encontré información relevante en los documentos para responder tu pregunta."
-    
-    if llm is not None:
-        prompt_template = PromptTemplate(
-            template="""Eres un asistente experto que responde preguntas basándose únicamente en el contexto 
-            de los documentos proporcionados. Usa la información de los documentos para dar respuestas precisas 
-            y detalladas. Si la información no está en los documentos, indica amablemente que no puedes responder 
-            basándote en la documentación disponible. Responde en español de forma clara y concisa.
-            
-            Contexto:
-            {contexto}
-            
-            Pregunta: {pregunta}
-            
-            Respuesta:""",
-            input_variables=["contexto", "pregunta"]
-        )
-        
-        prompt = prompt_template.format(contexto=contexto, pregunta=pregunta)
-        respuesta = llm.invoke(prompt)
-        return respuesta
-    else:
-        # Respuesta simple si no hay LLM
-        return f"Basado en los documentos proporcionados:\n\n{contexto[:1000]}..."
-
-# Interfaz principal
-def main():
-    st.title("📚 Sistema RAG - Asistente de Documentos")
-    st.markdown("---")
-    
-    # Sidebar para configuración
-    with st.sidebar:
-        st.header("⚙️ Configuración")
-        
-        # Botón para inicializar sistema
-        if st.button("🚀 Inicializar Sistema", type="primary"):
-            with st.spinner("Iniciando sistema..."):
-                # Cargar embeddings
-                embeddings = cargar_embeddings()
-                st.success("✅ Embeddings cargados")
+        # Cargar modelo Gemini
+        try:
+            # Probar conexión con la API REST de Gemini
+            try:
+                headers = {
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': GEMINI_API_KEY
+                }
+                data = {
+                    "contents": [{
+                        "parts": [{"text": "test"}]
+                    }]
+                }
                 
-                # Cargar modelo LLM
-                llm = cargar_modelo_llm()
-                if llm:
-                    st.success("✅ Modelo LLM cargado")
+                logger.info(f"🔑 Usando API key: {GEMINI_API_KEY[:20]}...")
+                logger.info(f"🌐 URL: {GEMINI_API_URL}")
+                
+                response = requests.post(GEMINI_API_URL, headers=headers, json=data, timeout=10)
+                
+                logger.info(f"📡 Respuesta HTTP: {response.status_code}")
+                
+                if response.status_code == 200:
+                    state.gemini_model = "gemini-flash-latest"
+                    logger.info("✅ Modelo Gemini gemini-flash-latest cargado exitosamente")
                 else:
-                    st.warning("⚠️ Modo simplificado (sin LLM)")
+                    logger.error(f"❌ Error cargando Gemini: {response.status_code}")
+                    logger.error(f"❌ Respuesta: {response.text[:500]}")
+                    # No fallar, continuar sin IA
+                    logger.warning("⚠️ Continuando sin modelo de IA...")
                 
-                # Procesar documentos
-                vector_store, document_sources = procesar_documentos(embeddings)
+            except Exception as e:
+                logger.error(f"❌ Error cargando Gemini: {e}")
+                return False
                 
-                if vector_store:
-                    st.success(f"✅ Sistema listo con {len(document_sources)} documentos")
-                    st.session_state.vector_store = vector_store
-                    st.session_state.llm = llm
-                    st.session_state.document_sources = document_sources
-                else:
-                    st.error("❌ No se pudieron procesar los documentos")
+        except Exception as e:
+            logger.error(f"❌ Error cargando Gemini: {e}")
+            return False
         
-        # Mostrar estado
-        if 'vector_store' in st.session_state:
-            st.success("🟢 Sistema Activo")
-            st.write(f"📄 Documentos: {len(st.session_state.get('document_sources', []))}")
-            if st.session_state.get('document_sources'):
-                st.write("📚 Fuentes:")
-                for doc in st.session_state.document_sources:
-                    st.write(f"  • {doc}")
-        else:
-            st.warning("🔴 Sistema No Inicializado")
-    
-    # Área principal
-    if 'vector_store' not in st.session_state:
-        st.info("👋 ¡Bienvenido! Por favor:")
-        st.write("1. **Agrega archivos PDF** a la carpeta `documentos/`")
-        st.write("2. **Presiona 'Inicializar Sistema'** en la barra lateral")
-        st.write("3. **Espera** a que se carguen los modelos")
-        
-        # Mostrar archivos PDF actuales
+        # Procesar documentos PDF
         documentos_path = Path("documentos")
         if documentos_path.exists():
             pdf_files = list(documentos_path.glob("*.pdf"))
+            
             if pdf_files:
-                st.write("📁 **PDFs encontrados:**")
-                for pdf in pdf_files:
-                    st.write(f"  • {pdf.name}")
-            else:
-                st.write("📂 La carpeta `documentos/` está vacía")
-    else:
-        # Sistema activo - mostrar chat
-        st.header("💬 Chat con tus Documentos")
-        
-        # Inicializar historial
-        if 'mensajes' not in st.session_state:
-            st.session_state.mensajes = []
-        
-        # Mostrar historial
-        for mensaje in st.session_state.mensajes:
-            with st.chat_message(mensaje["role"]):
-                st.markdown(mensaje["content"])
-                if mensaje.get("sources"):
-                    st.write(f"📚 **Fuentes:** {', '.join(mensaje['sources'])}")
-        
-        # Input para pregunta
-        pregunta = st.chat_input("¿Qué quieres saber sobre tus documentos?")
-        
-        if pregunta:
-            # Añadir pregunta al historial
-            st.session_state.mensajes.append({"role": "user", "content": pregunta})
-            
-            with st.chat_message("user"):
-                st.markdown(pregunta)
-            
-            # Procesar pregunta
-            with st.chat_message("assistant"):
-                with st.spinner("🔍 Buscando información..."):
-                    # Buscar documentos relevantes
-                    docs = st.session_state.vector_store.similarity_search(pregunta, k=3)
+                logger.info(f"📄 Encontrados {len(pdf_files)} archivos PDF:")
+                
+                for pdf_file in pdf_files:
+                    logger.info(f"   📄 Procesando: {pdf_file.name}")
                     
-                    if not docs:
-                        respuesta = "No encontré información relevante en los documentos para responder tu pregunta."
-                        fuentes = []
-                    else:
-                        # Extraer contexto y fuentes
-                        contexto = "\n\n".join([doc.page_content for doc in docs])
-                        fuentes = list(set([doc.metadata.get("source", "Documento desconocido") for doc in docs]))
+                    try:
+                        # Extraer texto del PDF
+                        doc = fitz.open(pdf_file)
+                        texto = ""
+                        num_paginas = len(doc)
                         
-                        # Generar respuesta
-                        respuesta = generar_respuesta(
-                            contexto, 
-                            pregunta, 
-                            st.session_state.llm
-                        )
+                        for page_num, page in enumerate(doc):
+                            page_text = page.get_text()
+                            if page_text.strip():
+                                texto += f"\n\n--- DOCUMENTO: {pdf_file.name} | PÁGINA {page_num + 1} ---\n\n"
+                                texto += page_text
+                        
+                        doc.close()
+                        
+                        if texto.strip():
+                            state.documentos_texto[pdf_file.name] = {
+                                'content': texto,
+                                'pages': num_paginas,
+                                'size': pdf_file.stat().st_size
+                            }
+                            logger.info(f"   ✅ {pdf_file.name}: {num_paginas} páginas, {len(texto)} caracteres")
                     
-                    st.markdown(respuesta)
-                    if fuentes:
-                        st.write(f"📚 **Fuentes:** {', '.join(fuentes)}")
+                    except Exception as e:
+                        logger.error(f"   ❌ Error procesando {pdf_file.name}: {e}")
+                
+                if state.documentos_texto:
+                    state.initialized = True
+                    logger.info(f"✅ Sistema inicializado con {len(state.documentos_texto)} documentos")
+                    
+                    # Mostrar resumen
+                    for nombre, info in state.documentos_texto.items():
+                        size_mb = info['size'] / (1024 * 1024)
+                        logger.info(f"   📋 {nombre}: {info['pages']} páginas, {size_mb:.2f} MB")
+                    
+                    return True
+        
+        logger.warning("⚠️ No se encontraron documentos PDF en la carpeta 'documentos/'")
+        return False
+        
+    except Exception as e:
+        logger.error(f"❌ Error inicializando sistema: {e}")
+        return False
+
+# Lifespan handler
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Iniciando AMSAC AI API...")
+    initialize_system()
+    yield
+    # Shutdown
+    logger.info("Apagando AMSAC AI API...")
+
+# Crear aplicación FastAPI
+app = FastAPI(
+    title="AMSAC AI API",
+    description="Sistema Inteligente de Consulta de Documentos",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Montar archivos estáticos
+try:
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+except Exception as e:
+    logger.warning(f"No se pudo montar directorio static: {e}")
+
+# Modelos Pydantic
+from typing import List, Dict, Any
+
+class ChatRequest(BaseModel):
+    question: str
+    history: List[Dict[str, Any]] = []
+
+class ChatResponse(BaseModel):
+    answer: str
+    source_documents: List[Dict[str, Any]] = []
+
+class HealthResponse(BaseModel):
+    status: str
+    initialized: bool
+    documents_count: int
+    chunks_count: int
+
+def generar_respuesta_gemini(pregunta, contexto):
+    """Genera respuesta usando Gemini API REST"""
+    if not state.gemini_model:
+        return "Modelo Gemini no disponible"
+    
+    try:
+        contexto_limitado = contexto[:12000]
+        prompt = f"""Eres un asistente experto de AMSAC que responde preguntas basándose únicamente en el contexto proporcionado.
+
+CONTEXTO COMPLETO DEL DOCUMENTO:
+{contexto_limitado}
+
+PREGUNTA DEL USUARIO: {pregunta}
+
+INSTRUCCIONES IMPORTANTES:
+1. Responde ÚNICAMENTE basándote en la información del contexto proporcionado
+2. Si la información no está en el contexto, indícalo claramente
+3. Sé claro, detallado y profesional
+4. Responde en español
+5. Usa un tono servicial y experto
+6. Estructura tu respuesta de forma clara y organizada
+7. Incluye todos los detalles relevantes del contexto
+8. **IMPORTANTE**: Usa formato markdown para hacer la respuesta más visual:
+   - Usa **negritas** para puntos importantes
+   - Usa • para viñetas
+   - Usa emojis relevantes (📍, 🏢, 💻, 👥, ✅)
+   - Usa numeración para listas ordenadas
+   - Usa separadores --- para secciones
+   - Usa > para citas importantes
+
+Respuesta completa y detallada:"""
+
+        headers = {
+            'Content-Type': 'application/json',
+            'X-goog-api-key': GEMINI_API_KEY
+        }
+        data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        response = requests.post(GEMINI_API_URL, headers=headers, json=data, timeout=45)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if 'candidates' in result and len(result['candidates']) > 0:
+                respuesta = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                
+                # Limpiar prefijos no deseados
+                prefijos_a_eliminar = [
+                    "Respuesta completa y detallada:",
+                    "Respuesta:",
+                    "Basado en el contexto,",
+                    "Según el documento,",
+                ]
+                
+                for prefijo in prefijos_a_eliminar:
+                    if respuesta.startswith(prefijo):
+                        respuesta = respuesta[len(prefijo):].strip()
+                
+                return respuesta
+            else:
+                return "No pude generar una respuesta completa. Intenta con otra pregunta."
+        else:
+            logger.error(f"Error API Gemini: {response.status_code} - {response.text}")
+            return f"Error generando respuesta: {response.status_code}"
             
-            # Añadir respuesta al historial
-            st.session_state.mensajes.append({
-                "role": "assistant", 
-                "content": respuesta,
-                "sources": fuentes
+    except requests.Timeout:
+        logger.error("Error generando respuesta: timeout de Gemini")
+        return "La generación tomó demasiado tiempo. Intenta con una pregunta más específica."
+        
+    except Exception as e:
+        logger.error(f"Error generando respuesta: {e}")
+        return f"Error generando respuesta: {str(e)}"
+
+# Endpoints
+@app.get("/", response_class=FileResponse)
+async def read_index():
+    """Sirve la página de chat"""
+    return FileResponse("templates/chat.html")
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Verifica el estado del sistema"""
+    if not state.initialized:
+        initialize_system()
+    
+    return HealthResponse(
+        status="healthy" if state.initialized else "initializing",
+        initialized=state.initialized,
+        documents_count=len(state.documentos_texto),
+        chunks_count=sum(len(doc['content']) for doc in state.documentos_texto.values()) if state.documentos_texto else 0
+    )
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Procesa una pregunta del usuario"""
+    logger.info(f"Recibida pregunta: {request.question}")
+    
+    if not state.initialized:
+        logger.warning("Sistema no inicializado, intentando inicializar...")
+        if not initialize_system():
+            logger.error("No se pudo inicializar el sistema")
+            # En lugar de fallar, devolver un mensaje informativo
+            return ChatResponse(
+                answer="⚠️ **Sistema no disponible temporalmente**\n\nEl sistema de IA no está disponible porque la API key de Gemini necesita ser actualizada. Por favor, crea una nueva API key en [Google AI Studio](https://aistudio.google.com/app/apikey) y actualízala en el archivo `.env`.",
+                source_documents=[]
+            )
+    
+    if not request.question.strip():
+        logger.warning("Pregunta vacía recibida")
+        raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía")
+    
+    try:
+        logger.info(f"Generando respuesta para: {request.question}")
+        
+        # Combinar todo el contexto de los documentos
+        contexto = "\n\n".join([
+            f"=== DOCUMENTO: {nombre} ===\n{info['content']}"
+            for nombre, info in state.documentos_texto.items()
+        ])
+        
+        logger.info(f"Contexto generado: {len(contexto)} caracteres")
+        
+        # Generar respuesta
+        respuesta = generar_respuesta_gemini(request.question, contexto)
+        logger.info(f"Respuesta generada: {len(respuesta)} caracteres")
+        
+        # Preparar fuentes
+        fuentes = [
+            {
+                'content': info['content'][:500] + "...",  # Primeros 500 caracteres
+                'source': nombre,
+                'pages': info['pages'],
+                'relevance': 1.0
+            }
+            for nombre, info in state.documentos_texto.items()
+        ]
+        
+        logger.info("Enviando respuesta")
+        return ChatResponse(
+            answer=respuesta,
+            source_documents=fuentes
+        )
+        
+    except Exception as e:
+        logger.error(f"Error en chat: {e}", exc_info=True)
+        return ChatResponse(
+            answer=f"Error procesando la solicitud: {str(e)}",
+            source_documents=[]
+        )
+
+@app.get("/status")
+async def get_status():
+    """Obtiene estado detallado del sistema"""
+    try:
+        documentos_info = []
+        for nombre, info in state.documentos_texto.items():
+            size_mb = info['size'] / (1024 * 1024)
+            documentos_info.append({
+                'name': nombre,
+                'pages': info['pages'],
+                'size_mb': round(size_mb, 2)
             })
         
-        # Botón para limpiar chat
-        if st.button("🗑️ Limpiar Chat"):
-            st.session_state.mensajes = []
-            st.rerun()
+        return {
+            "initialized": state.initialized,
+            "documents": documentos_info,
+            "total_documents": len(documentos_info),
+            "gemini_available": state.gemini_model is not None
+        }
+    except Exception as e:
+        logger.error(f"Error en status: {e}")
+        return {
+            "initialized": state.initialized,
+            "documents": [],
+            "total_documents": 0,
+            "gemini_available": state.gemini_model is not None,
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=9000, reload=True)

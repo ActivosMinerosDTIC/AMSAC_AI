@@ -15,5 +15,5 @@ bitsandbytes
 streamlit
 PyMuPDF
 openai
-google-generativeai
+google-genai
 requests
