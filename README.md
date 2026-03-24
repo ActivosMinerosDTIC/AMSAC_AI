@@ -1,6 +1,6 @@
 # 🤖 AMSAC AI - Sistema de Consulta de Documentos
 
-Sistema inteligente de consulta de documentos PDF usando Google Gemini AI con interfaz web moderna.
+Sistema inteligente de consulta de documentos PDF usando Google Gemini AI con interfaz web moderna y ligera.
 
 ## 🌟 Características
 
@@ -8,21 +8,28 @@ Sistema inteligente de consulta de documentos PDF usando Google Gemini AI con in
 - **Interfaz Moderna** - Diseño web profesional con Bootstrap 5
 - **Procesamiento Automático** - Carga y procesa PDFs automáticamente
 - **FastAPI** - API REST rápida y eficiente
+- **Ligero** - Mínimas dependencias para fácil instalación
 - **Fácil de Usar** - Chat interactivo en tiempo real
 
 ## 🚀 Inicio Rápido
 
-### 1. Activar Entorno Virtual
+### 1. Instalar Dependencias
 ```bash
-.venv\Scripts\Activate.ps1  # Windows PowerShell
+pip install -r requirements.txt
 ```
 
-### 2. Iniciar Aplicación
+### 2. Configurar API Key
+Edita el archivo `.env` y agrega tu API key de Google Gemini:
+```
+GEMINI_API_KEY=tu_api_key_aqui
+```
+
+### 3. Iniciar Aplicación
 ```bash
 python app.py
 ```
 
-### 3. Usar el Sistema
+### 4. Usar el Sistema
 1. Abre tu navegador en `http://localhost:9000`
 2. Agrega archivos PDF a la carpeta `documentos/`
 3. ¡Empieza a chatear con tus documentos!
@@ -36,7 +43,7 @@ python app.py
 │   └── chat.html      # Interfaz de chat
 ├── static/            # Archivos estáticos (CSS, JS, imágenes)
 ├── app.py             # Aplicación principal FastAPI
-├── requirements.txt   # Dependencias del proyecto
+├── requirements.txt   # Dependencias mínimas del proyecto
 └── .env              # Variables de entorno (API keys)
 ```
 
@@ -68,11 +75,12 @@ Una vez iniciado el sistema, puedes hacer preguntas como:
 
 - Python 3.9+
 - Google Gemini API Key (configurar en `.env`)
-- Memoria RAM: 2GB+ recomendado
+- Memoria RAM: 1GB+ (versión ligera)
 
-## � Configuración API Key
+## 🔑 Configuración API Key
 
-Edita el archivo `.env` y agrega tu API key de Google Gemini:
+1. Obtén tu API key en [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Edita el archivo `.env` y agrega:
 ```
 GEMINI_API_KEY=tu_api_key_aqui
 ```
@@ -86,10 +94,15 @@ GEMINI_API_KEY=tu_api_key_aqui
 ### Si hay error de API:
 - Verifica que tu API key de Gemini sea válida
 - Revisa el archivo `.env`
+- Asegúrate de que la API key no esté marcada como filtrada
 
 ### Si la aplicación no inicia:
 - Verifica que el entorno virtual esté activado
 - Reinstala las dependencias: `pip install -r requirements.txt`
+
+### Si las respuestas tardan mucho:
+- El sistema tiene un timeout de 45 segundos para evitar bloqueos
+- Intenta con preguntas más específicas
 
 ## 📄 Licencia
 
